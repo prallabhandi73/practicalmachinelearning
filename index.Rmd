@@ -11,20 +11,86 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+The goal of this project is to use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants to predict the manner in which they did the exercise (how well they are doing a particular activity). This will be accomplished by training a prediction model on the accelerometer data. The algorithm that  will be used for this exercise will be a random forest classifier. The rational for this is explained later in this web page.
+The first step is to split given tarining data into the training  and validation sets using the createData partition command of "caret package". Cross Validation will be done using these training and validation sets of the given training data from "pml-training csv file"
+.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
+library(mlbench)
+library(parallel)
+library(doParallel)
+library(ggplot2)
+library(knitr)
+library(caret)
+library(rpart.plot)
 
-```{r cars}
-summary(cars)
+
+df=read.csv("C:/Prabhakar/Pers/Coursera Practical Machine Learning/Project Assignment/pml-training-pruned3.csv")
+dfTest=read.csv("C:/Prabhakar/Pers/Coursera Practical Machine Learning/Project Assignment/pml-testing-pruned.csv")
+
+# create training & testing data sets
+
+inTraining <- createDataPartition(y=df$classe, p = .70, list=FALSE)
+training <- df[inTraining,]
+testing <- df[-inTraining,]
 ```
 
-## Including Plots
+Cleaning up the Data : 
+The training data consists of 152 variables (160 ex first 8), but many of the variables are sparse, meaning that they only have observations for a few of the data points. These sparse variables may have predictive value, but because they are observed so infrequently they become fairly useless for classifying most of the data points that do not contain these observations. Therefore it makes sense to filter these inputs out and focus the prediction efforts on variables that have at least 90% of their observations filled in. Also careful study of  the paper referred to in the website  http://groupware.les.inf.puc-rio.br/har, "Wearable Computing: Accelerometers’ Data Classification of Body Postures and Movements section 4- data selection and feature extraction " helps us conclude that we need to focus on the raw variables as predictors instead of statistical variables like avg, min, max ..etc. So, with this understanding many of the variables ( columns ) are eliminated from the dataset. After this excercise, we are left with 52 variables as predictors. 
 
-You can also embed plots, for example:
+Why Random Forest as a predictive model/algorithm
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+1.	After filtering out sparse variables there are still 52 input variables to work with. Random forests are particularly well suited to handle a large number of inputs, especially when the interactions between variables are unknown.
+2.	A random forest has a built in cross-validation component that gives an unbiased estimate of the forests out-of-sample (OOB) error rate. This OOB error rate can be helpful in tuning the forest parameters.
+3.	A random forest can be used to estimate variable importance. This is especially helpful if the goal is to trim down the inputs into a more parsimonious set.
+4.	A random forest can handle unscaled variables and categorical variables, which reduces the need for cleaning and transforming variables which are steps that can be subject to overfitting and noise.
+5.	Individual trees can be pulled out of the random forest and examined. This allows for decent intuition into how the predictor is arriving at its predicted classifications.
+
+Parallel Processing 
+
+Inorder to optimize the execution of the "rf" algorithm parallel cluster configuration is done.
+
+Variable importance - Cross Check
+Determining the reletive importance of variables to corroborate that these 52 variables are really the right contributors for prediction, varImp function is used and plotting is done to capture the same.
+
+Predictions are cross verified with the confusionMatrix function and error misclassifi9cation was checked as below. The accuracy and error misclassification were matching.
+
+```{r}
+# set up training run for x / y syntax because model format performs poorly
+x <- training[,-53]
+y <- training[,53]
+
+# Step 1: Configure parallel processing
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+# Step 2: Configure trainControl object
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                           allowParallel = TRUE)
+
+# Step 3: Develop training model
+fit <- train(x,y, method="rf",data=df,trControl = fitControl)
+
+# Step 4: De-register parallel processing cluster
+stopCluster(cluster)
+registerDoSEQ()
+
+#  Create Variable Importance List
+varImpList <- varImp(fit)
+
+#  Plot Variable importance list
+# {r, echo = FALSE}
+plot(varImpList, main = "Variable Importance of Top 50", top = 50)
+
+predictions=predict(fit, newdata=testing)
+
+confusionMatrix(predictions, testing$classe)
+
+missClass = function(values, prediction) {
+    sum(prediction != values)/length(values)
+}
+errRate = missClass(testing$classe, predictions)
+errRate
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
